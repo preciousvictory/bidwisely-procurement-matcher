@@ -6,7 +6,10 @@ export interface Input {
     startUrls: { url: string }[];
     maxItems: number;
     maxRequestsPerCrawl: number;
-    openAiApiKey?: string;
+    /** Which provider to use. */
+    aiProvider?: 'openai' | 'gemini' | 'claude';
+    aiApiKey?: string;
+    aiModel?: string;
     smeProfile: SmeProfile;
     keywords: string[];
     enableAiExtraction: boolean;
@@ -45,6 +48,7 @@ export interface Opportunity {
     minExperienceYears: number | null;
     sourceUrl: string;
     scrapedAt: string;
+    extractionSource: string;
 }
 
 export interface MatchResult {

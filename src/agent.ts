@@ -1,21 +1,23 @@
 /**
- * BidWisely - AI Agent Module (revised)
+ * BidWisely - AI Agent Module (revised, multi-provider)
  *
- * Reads the dataset, drops expired tenders, ranks the rest, asks the model for a
- * briefing plus a "why / next step" per top tender, validates that reply against the
- * real records, and saves everything to the Key-Value Store as AGENT_SUMMARY.
- * If the model is unavailable the Actor still produces a deterministic briefing.
+ * Reads the dataset, drops expired tenders, ranks the rest, asks the model
+ * (OpenAI, Gemini or Claude, with automatic fallback across whichever are
+ * configured) for a briefing plus a "why / next step" per top tender,
+ * validates that reply against the real records, and saves everything to
+ * the Key-Value Store as AGENT_SUMMARY. If every provider is unavailable
+ * the Actor still produces a deterministic, rule-based briefing.
  */
 
 import { Actor, log } from 'apify';
-import OpenAI from 'openai';
 
+import type { AiProvider } from './llmProvider.js';
+import { callJsonWithFallback, collectKeys, extractJsonObject, hasAnyAiKey } from './llmProvider.js';
 import type { MatchedOpportunity, SmeProfile } from './types.js';
 
 interface AgentInput {
-    openAiApiKey?: string;
     smeProfile: SmeProfile;
-    /** Set false when the user supplied their own OpenAI key and should not pay twice. */
+    /** Set false when the user supplied their own provider key and should not pay twice. */
     chargeForInsight?: boolean;
 }
 
@@ -55,11 +57,11 @@ function fallbackBriefing(top: MatchedOpportunity[], urgent: number, total: numb
         `Best fit: "${best.title ?? 'Untitled'}" at ${best.matchScore}% relevance` +
         `${best.deadline ? `, closing ${best.deadline}` : ''}. ` +
         `${urgent > 0 ? `${urgent} tender(s) close within 7 days. ` : ''}` +
-        `Open each original notice and confirm the requirements before bidding. Scores show relevance, not the chance of winning.`
+        'Open each original notice and confirm the requirements before bidding. Scores show relevance, not the chance of winning.'
     );
 }
 
-export async function runAiAgentSummary({ openAiApiKey, smeProfile, chargeForInsight = true }: AgentInput): Promise<void> {
+export async function runAiAgentSummary({ smeProfile, chargeForInsight = true }: AgentInput): Promise<void> {
     const dataset = await Actor.openDataset();
     const { items } = await dataset.getData({ limit: 1000 });
     const all = items as MatchedOpportunity[];
@@ -96,10 +98,13 @@ export async function runAiAgentSummary({ openAiApiKey, smeProfile, chargeForIns
         nextStep: o.missingRequirements.length ? `Resolve: ${o.missingRequirements[0]}` : 'Read the original notice and prepare your documents.',
     }));
     let agentUsedAi = false;
+    let agentProvider: AiProvider | null = null;
 
-    const apiKey = openAiApiKey ?? process.env.OPENAI_API_KEY;
-    if (apiKey && top5.length > 0) {
-        const prompt =
+    const enableAiExtraction = process.env.ENABLE_AI_EXTRACTION !== 'false';
+    const keys = collectKeys();
+    if (enableAiExtraction && hasAnyAiKey(keys) && top5.length > 0) {
+        const system = 'You are a procurement advisor for African SMEs. Return only JSON.';
+        const user =
             `SME profile:\n${JSON.stringify({
                 industry: smeProfile.industry,
                 location: smeProfile.location ?? null,
@@ -108,34 +113,25 @@ export async function runAiAgentSummary({ openAiApiKey, smeProfile, chargeForIns
                 services: smeProfile.services ?? [],
             })}\n\n` +
             `Candidate tenders (already ranked by a rule-based relevance score; the score is NOT a chance of winning):\n${JSON.stringify(top5.map(brief), null, 1)}\n\n` +
-            `Use ONLY the data above. Do not invent tenders, values, dates or requirements.\n` +
-            `Return ONLY JSON: {"briefing": string (max 200 words, professional and encouraging), ` +
-            `"priorities": [{"sourceUrl": string (copied exactly from the data), "why": string (max 25 words), "nextStep": string (max 20 words)}]}`;
+            'Use ONLY the data above. Do not invent tenders, values, dates or requirements.\n' +
+            'Return ONLY JSON: {"briefing": string (max 200 words, professional and encouraging), ' +
+            '"priorities": [{"sourceUrl": string (copied exactly from the data), "why": string (max 25 words), "nextStep": string (max 20 words)}]}';
 
         try {
-            const client = new OpenAI({ apiKey, timeout: 40_000, maxRetries: 1 });
-            const res = await client.chat.completions.create({
-                model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
-                temperature: 0.3,
-                max_tokens: 900,
-                response_format: { type: 'json_object' },
-                messages: [
-                    { role: 'system', content: 'You are a procurement advisor for African SMEs. Return only JSON.' },
-                    { role: 'user', content: prompt },
-                ],
-            });
-            const parsed = JSON.parse(res.choices[0]?.message?.content ?? '{}') as {
+            const preferred = (process.env.AI_PROVIDER as AiProvider | 'auto' | undefined) ?? 'auto';
+            const { text, provider } = await callJsonWithFallback(keys, preferred, system, user, 900);
+            const parsed = extractJsonObject<{
                 briefing?: unknown;
                 priorities?: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }[];
-            };
+            }>(text) ?? {};
 
             if (typeof parsed.briefing === 'string' && parsed.briefing.trim()) briefing = parsed.briefing.trim();
 
             // Keep only priorities that point at a real top5 record (guards against hallucinated URLs)
             const valid = new Map(top5.map((o) => [o.sourceUrl, o]));
             const cleaned: Priority[] = (parsed.priorities ?? [])
-                .filter((p) => typeof p.sourceUrl === 'string' && valid.has(p.sourceUrl) && typeof p.why === 'string' && typeof p.nextStep === 'string')
-                .map((p) => ({
+                .filter((p: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }) => typeof p.sourceUrl === 'string' && valid.has(p.sourceUrl) && typeof p.why === 'string' && typeof p.nextStep === 'string')
+                .map((p: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }) => ({
                     sourceUrl: p.sourceUrl as string,
                     title: valid.get(p.sourceUrl as string)?.title ?? null,
                     why: p.why as string,
@@ -143,12 +139,13 @@ export async function runAiAgentSummary({ openAiApiKey, smeProfile, chargeForIns
                 }));
             if (cleaned.length > 0) priorities = cleaned;
             agentUsedAi = true;
+            agentProvider = provider;
         } catch (err) {
-            log.warning('[agent] OpenAI agent call failed, using rule-based briefing', { error: (err as Error).message });
+            log.warning('[agent] All AI providers failed, using rule-based briefing', { error: (err as Error).message });
         }
     }
 
-    // Charge only when the model really produced the insight
+    // Charge only when a model really produced the insight
     if (agentUsedAi && chargeForInsight) {
         const charge = await Actor.charge({ eventName: 'agent-insight' });
         if (charge.eventChargeLimitReached) log.warning('[agent] Spending limit reached after agent-insight.');
@@ -160,6 +157,7 @@ export async function runAiAgentSummary({ openAiApiKey, smeProfile, chargeForIns
         totalOpportunities: all.length,
         expiredExcluded: expiredCount,
         aiGenerated: agentUsedAi,
+        aiProvider: agentProvider,
         matched: matched.map(brief), // score >= 65
         partial: partial.map(brief), // score 40 to 64
         unmatched: unmatched.map(brief), // score < 40
@@ -171,6 +169,34 @@ export async function runAiAgentSummary({ openAiApiKey, smeProfile, chargeForIns
     };
 
     await Actor.setValue('AGENT_SUMMARY', summary);
+    
+    // Dump all opportunities clearly separating AI vs Heuristic extraction and AI conclusions
+    const fullDump = all.map((o) => ({
+        opportunityDetails: {
+            title: o.title,
+            buyer: o.buyer,
+            category: o.category,
+            location: o.location,
+            deadline: o.deadline,
+            contractValue: o.contractValue,
+            requirements: o.requirements,
+            certifications: o.certifications,
+            minExperienceYears: o.minExperienceYears,
+            sourceUrl: o.sourceUrl,
+            scrapedAt: o.scrapedAt,
+            extractedBy: o.extractionSource, // Shows whether 'gemini', 'openai', 'claude' or 'heuristic' pulled the data
+        },
+        matchingConclusion: {
+            matchScore: o.matchScore,
+            matchStatus: o.matchStatus, // matched, partial, unmatched
+            matchLabel: o.matchLabel,
+            missingRequirements: o.missingRequirements,
+            explanation: o.matchExplanation, // Why it matched/failed
+        }
+    }));
+    await Actor.setValue('ALL_OPPORTUNITIES', fullDump);
+
     await Actor.setStatusMessage(`Done. ${matched.length} strong, ${partial.length} partial matches. ${briefing.slice(0, 120)}`);
     log.info('[agent] AI Agent summary saved to Key-Value Store under "AGENT_SUMMARY"');
+    log.info('[agent] Full list of ALL scraped opportunities saved to Key-Value Store under "ALL_OPPORTUNITIES"');
 }

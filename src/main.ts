@@ -1,13 +1,15 @@
 /**
- * BidWisely Procurement Matcher – main entry point
+ * BidWisely Procurement Matcher – main entry point (multi-provider AI)
  *
  * Flow:
- *   1. Read input (startUrls, smeProfile, maxItems, keywords, enableAiExtraction)
+ *   1. Read input (startUrls, smeProfile, maxItems, keywords, enableAiExtraction,
+ *      aiProvider + up to three provider keys)
  *   2. Run CheerioCrawler across Nigerian procurement portals
- *   3. On LISTING pages → enqueue individual tender links (label: DETAIL)
- *   4. On DETAIL pages  → charge opportunity-discovered, extract via OpenAI,
- *      charge ai-extraction, match against SME profile, pushData
- *   5. After crawl → run AI Agent summary and persist to Key-Value Store
+ *   3. On LISTING pages -> enqueue individual tender links (label: DETAIL)
+ *   4. On DETAIL pages  -> extract via whichever AI provider is configured
+ *      (falls back across providers, then to heuristics), match against the
+ *      SME profile, pushData
+ *   5. After crawl -> run AI Agent summary and persist to Key-Value Store
  */
 
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -20,60 +22,80 @@ import { router } from './routes.js';
 import type { Input, SmeProfile } from './types.js';
 
 // ─── Graceful abort ──────────────────────────────────────────────────────────
+await Actor.init();
+
 Actor.on('aborting', async () => {
-    log.warning('Actor is aborting – persisting state and exiting...');
+    log.warning('Actor is aborting - persisting state and exiting...');
     await sleep(1000);
     await Actor.exit();
 });
-
-await Actor.init();
 
 // ─── Input ───────────────────────────────────────────────────────────────────
 const input = await Actor.getInput<Input>();
 
 if (!input) {
-    throw new Error('❌  Actor input is missing. Please provide startUrls, smeProfile, and openAiApiKey.');
+    throw new Error('Actor input is missing. Please provide startUrls and smeProfile.');
 }
 
 const {
-    startUrls = [{ url: 'https://www.globaltenders.com/nigeria-tenders' }],
+    startUrls = [{ url: 'https://www.tender.ng/' }],
     maxItems = 18,
     keywords = [],
     enableAiExtraction = true,
-    openAiApiKey: inputApiKey,
+    aiProvider = 'openai',
+    aiApiKey: inputAiApiKey,
+    aiModel,
     smeProfile = {},
     maxRequestsPerCrawl = 200,
     proxyConfiguration,
 } = input;
 
-// Accept key from input OR from .env (Apify SDK loads .env automatically locally)
-// .env may use either OPENAI_API_KEY or OpenAI_API_KEY (case varies)
-const openAiApiKey =
-    inputApiKey ??
-    process.env.OPENAI_API_KEY ??
-    process.env.OpenAI_API_KEY;
+const envKeyMap: Record<string, string | undefined> = {
+    openai: process.env.OPENAI_API_KEY ?? process.env.OpenAI_API_KEY,
+    gemini: process.env.GEMINI_API_KEY ?? process.env.Gemini_API_KEY,
+    claude: process.env.CLAUDE_API_KEY ?? process.env.Claude_API_KEY,
+};
 
-if (!openAiApiKey) {
-    throw new Error(
-        '❌  OpenAI API key not found.\n' +
-        '  • Running on Apify Cloud? Add your key to the "OpenAI API Key" field in the Actor input form.\n' +
-        '  • Running locally? Add OPENAI_API_KEY=sk-... to your .env file.\n' +
-        '  • Want to run WITHOUT AI? Set enableAiExtraction to false in the input — no API key needed.',
-    );
+const resolvedAiApiKey = inputAiApiKey ?? envKeyMap[aiProvider];
+
+// True only when the USER typed a key into the input. In that case
+// they are paying that provider directly, so we must not also charge ai-extraction.
+const userSuppliedKey = Boolean(inputAiApiKey);
+
+const anyKeyConfigured = Boolean(resolvedAiApiKey || envKeyMap.openai || envKeyMap.gemini || envKeyMap.claude);
+
+if (enableAiExtraction && !anyKeyConfigured) {
+    log.warning('No AI API keys found. AI extraction is disabled; falling back to heuristic extraction for this run.');
+} else if (enableAiExtraction && !resolvedAiApiKey) {
+    log.warning(`No API key found for preferred provider ${aiProvider.toUpperCase()}. Will attempt to fall back to other configured providers in your environment.`);
 }
 
+if (resolvedAiApiKey) {
+    process.env[`${aiProvider.toUpperCase()}_API_KEY`] = resolvedAiApiKey;
+}
+if (aiModel) {
+    process.env[`${aiProvider.toUpperCase()}_MODEL`] = aiModel;
+}
+process.env.AI_PROVIDER = aiProvider;
+process.env.USER_SUPPLIED_KEY = userSuppliedKey ? '1' : '0';
+
 // Share configuration via env so the router (separate module) can read it
-process.env.OPENAI_API_KEY = openAiApiKey;
 process.env.SME_PROFILE = JSON.stringify(smeProfile);
 process.env.MAX_ITEMS = String(maxItems);
 process.env.MAX_ITEMS_PER_SOURCE = String(Math.ceil(maxItems / Math.max(1, startUrls.length)));
 process.env.KEYWORDS = JSON.stringify(keywords);
 process.env.ENABLE_AI_EXTRACTION = String(enableAiExtraction);
 
-log.info('🚀  BidWisely Procurement Matcher starting', {
+log.info('BidWisely Procurement Matcher starting', {
     maxItems,
     keywords,
     enableAiExtraction,
+    aiProvider,
+    providersConfigured: {
+        openai: Boolean(envKeyMap.openai),
+        gemini: Boolean(envKeyMap.gemini),
+        claude: Boolean(envKeyMap.claude),
+    },
     startUrls: startUrls.map((u) => u.url),
 });
 
@@ -84,10 +106,10 @@ const proxy = await Actor.createProxyConfiguration(proxyConfiguration);
 const crawler = new CheerioCrawler({
     proxyConfiguration: proxy,
     maxRequestsPerCrawl,
-    // Respect rate limits – Nigerian gov portals are slow
+    // Respect rate limits - Nigerian gov portals are slow
     minConcurrency: 1,
     maxConcurrency: 5,
-    requestHandlerTimeoutSecs: 60,
+    requestHandlerTimeoutSecs: 90,
     navigationTimeoutSecs: 30,
     requestHandler: router,
     // Retry failed requests up to 3 times
@@ -106,8 +128,8 @@ const startRequests = startUrls.map((req) => ({
 await crawler.run(startRequests);
 
 // ─── AI Agent Summary ────────────────────────────────────────────────────────
-log.info('🤖  Running AI Agent to summarise matched opportunities...');
-await runAiAgentSummary({ openAiApiKey, smeProfile: smeProfile as SmeProfile });
+log.info('Running AI Agent to summarise matched opportunities...');
+await runAiAgentSummary({ smeProfile: smeProfile as SmeProfile, chargeForInsight: !userSuppliedKey });
 
-log.info('✅  BidWisely run complete.');
+log.info('BidWisely run complete.');
 await Actor.exit();

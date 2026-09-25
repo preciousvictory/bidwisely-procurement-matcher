@@ -7,8 +7,9 @@
  */
 
 import { log } from 'apify';
-import OpenAI from 'openai';
 
+import type { AiProvider } from './llmProvider.js';
+import { callJsonWithFallback, collectKeys, extractJsonObject, hasAnyAiKey } from './llmProvider.js';
 import type { CheerioHints, Opportunity } from './types.js';
 
 // ─── Fixed taxonomy. Use the SAME list in the frontend onboarding "industry" dropdown ───
@@ -253,6 +254,7 @@ function build(
         requirements: string[]; certifications: string[]; years: number | null;
     },
     sourceUrl: string,
+    extractionSource: string,
 ): Opportunity {
     return {
         title: p.title,
@@ -268,6 +270,7 @@ function build(
         minExperienceYears: p.years,
         sourceUrl,
         scrapedAt: new Date().toISOString(),
+        extractionSource,
     };
 }
 
@@ -291,6 +294,7 @@ function heuristicExtract(rawText: string, sourceUrl: string, hintsIn: CheerioHi
             years: findExperienceYears(rawText),
         },
         sourceUrl,
+        'heuristic',
     );
 }
 
@@ -313,11 +317,13 @@ Return ONLY a valid JSON object with exactly these keys (use null or [] when abs
   "minExperienceYears": number | null
 }`;
 
-async function aiExtract(rawText: string, sourceUrl: string, hintsIn: CheerioHints): Promise<Opportunity> {
+async function aiExtract(
+    rawText: string,
+    sourceUrl: string,
+    hintsIn: CheerioHints,
+): Promise<{ opportunity: Opportunity; provider: AiProvider }> {
     const hints = cleanHints(hintsIn);
     try {
-        const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30_000, maxRetries: 1 });
-
         const hintLines = [
             hints.title && `Title: ${hints.title}`,
             hints.buyer && `Buyer: ${hints.buyer}`,
@@ -325,28 +331,19 @@ async function aiExtract(rawText: string, sourceUrl: string, hintsIn: CheerioHin
             hints.deadline && `Deadline: ${hints.deadline}`,
         ].filter(Boolean).join('\n');
 
-        const res = await client.chat.completions.create({
-            model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
-            temperature: 0,
-            max_tokens: 900,
-            response_format: { type: 'json_object' },
-            messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                {
-                    role: 'user',
-                    content:
-                        `LOW-CONFIDENCE HINTS (scraped from page markup or the URL, may be wrong; the page text wins on conflict):\n` +
-                        `${hintLines || 'None'}\n\nSOURCE URL: ${sourceUrl}\n\nPAGE TEXT:\n"""\n${rawText.slice(0, 6500)}\n"""`,
-                },
-            ],
-        });
+        const userPrompt =
+            'LOW-CONFIDENCE HINTS (scraped from page markup or the URL, may be wrong; the page text wins on conflict):\n' +
+            `${hintLines || 'None'}\n\nSOURCE URL: ${sourceUrl}\n\nPAGE TEXT:\n"""\n${rawText.slice(0, 6500)}\n"""`;
 
-        const parsed = JSON.parse(res.choices[0]?.message?.content ?? '{}') as Record<string, unknown>;
+        const preferred = (process.env.AI_PROVIDER as AiProvider | 'auto' | undefined) ?? 'auto';
+        const { text, provider } = await callJsonWithFallback(collectKeys(), preferred, SYSTEM_PROMPT, userPrompt, 900);
+        const parsed = extractJsonObject<Record<string, unknown>>(text) ?? {};
+
         const title = asStr(parsed.title, 200) ?? hints.title;
         const requirements = asStrArr(parsed.requirements);
         const money = asNum(parsed.contractValue);
 
-        return build(
+        const opportunity = build(
             {
                 title,
                 buyer: asStr(parsed.buyer, 120) ?? hints.buyer,
@@ -360,7 +357,9 @@ async function aiExtract(rawText: string, sourceUrl: string, hintsIn: CheerioHin
                 years: asNum(parsed.minExperienceYears),
             },
             sourceUrl,
+            provider,
         );
+        return { opportunity, provider };
     } catch (err) {
         // Re-throw a tagged error so the caller knows AI did NOT succeed (and must not charge for it)
         throw new AiExtractionError((err as Error).message);
@@ -374,13 +373,17 @@ export async function extractOpportunity(
     sourceUrl: string,
     enableAiExtraction: boolean,
     hints: CheerioHints,
-): Promise<{ opportunity: Opportunity; aiUsed: boolean }> {
-    if (enableAiExtraction && process.env.OPENAI_API_KEY) {
-        try {
-            return { opportunity: await aiExtract(rawText, sourceUrl, hints), aiUsed: true };
-        } catch (err) {
-            log.warning('[extractor] OpenAI call failed, falling back to heuristics', { error: (err as Error).message });
+): Promise<{ opportunity: Opportunity; aiUsed: boolean; aiProvider: AiProvider | null }> {
+    if (enableAiExtraction) {
+        const keys = collectKeys();
+        if (hasAnyAiKey(keys)) {
+            try {
+                const { opportunity, provider } = await aiExtract(rawText, sourceUrl, hints);
+                return { opportunity, aiUsed: true, aiProvider: provider };
+            } catch (err) {
+                log.warning('[extractor] All AI providers failed, falling back to heuristics', { error: (err as Error).message });
+            }
         }
     }
-    return { opportunity: heuristicExtract(rawText, sourceUrl, hints), aiUsed: false };
+    return { opportunity: heuristicExtract(rawText, sourceUrl, hints), aiUsed: false, aiProvider: null };
 }

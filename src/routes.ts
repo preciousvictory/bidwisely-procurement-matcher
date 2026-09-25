@@ -25,11 +25,7 @@ let processedCount = 0;
 const domainCounts = new Map<string, number>();
 
 function hostnameOf(url: string): string {
-    try {
-        return new URL(url).hostname;
-    } catch {
-        return 'unknown';
-    }
+    try { return new URL(url).hostname; } catch { return 'unknown'; }
 }
 
 function parseUrlSlug(url: string): CheerioHints {
@@ -41,14 +37,9 @@ function parseUrlSlug(url: string): CheerioHints {
 
         const withoutId = slug.replace(/_\d+$/, '');
         const pipeIdx = withoutId.indexOf('|');
-        const buyer =
-            pipeIdx >= 0
-                ? withoutId
-                      .slice(pipeIdx + 1)
-                      .replace(/-+/g, ' ')
-                      .replace(/\s+/g, ' ')
-                      .trim()
-                : null;
+        const buyer = pipeIdx >= 0
+            ? withoutId.slice(pipeIdx + 1).replace(/-+/g, ' ').replace(/\s+/g, ' ').trim()
+            : null;
         const beforePipe = pipeIdx >= 0 ? withoutId.slice(0, pipeIdx).replace(/-$/, '') : withoutId;
 
         const tripleMatch = beforePipe.match(/^(.+?)---(.+)$/);
@@ -86,25 +77,11 @@ function parseUrlSlug(url: string): CheerioHints {
 
 function isDetailUrl(url: string): boolean {
     return (
-        // Existing patterns
         /\/view\//i.test(url) ||
         /\/tender-detail/i.test(url) ||
         /\/notice\//i.test(url) ||
         /[?&]tender[-_]?id=/i.test(url) ||
-        /\/tenders?\/\d+/i.test(url) ||
-
-        // 1. lagosppa.gov.ng (Biddingo iframe/redirects)
-        /[?&]tndrId=/i.test(url) ||
-        /StSupplierTenderDetail\.jsp/i.test(url) ||
-
-        // 2. nigeriatenders.com (/tender/ followed by a specific slug)
-        /\/tender\/[a-z0-9-_]+/i.test(url) ||
-
-        // 3. ebid.com.ng & etenders.com.ng (Long WP-style slugs with procurement keywords)
-        /(invitation-to|request-for|expression-of-interest|pre-qualification|technical-bidding)/i.test(url) ||
-        
-        // General fallback for long slugs containing core keywords surrounded by hyphens
-        /(-tender-|-bidding-|-procurement-)/i.test(url)
+        /\/tenders\/\d+/i.test(url)
     );
 }
 
@@ -193,24 +170,14 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
                 (h2Text && h2Text.length < 200 ? h2Text : null) ||
                 urlHints.title,
             buyer:
-                $(
-                    '.buyer, .entity, .organization, [class*="buyer"], [class*="org"], [class*="ministry"], [class*="agency"], .client-name',
-                )
-                    .first()
-                    .text()
-                    .trim() || urlHints.buyer,
+                $('.buyer, .entity, .organization, [class*="buyer"], [class*="org"], [class*="ministry"], [class*="agency"], .client-name')
+                    .first().text().trim() || urlHints.buyer,
             location:
                 $('[class*="location"], [class*="state"], [class*="region"], [class*="address"], [class*="venue"]')
-                    .first()
-                    .text()
-                    .trim() || urlHints.location,
+                    .first().text().trim() || urlHints.location,
             deadline:
-                $(
-                    '[class*="deadline"], [class*="closing"], [class*="submission"], [class*="due-date"], [class*="expiry"]',
-                )
-                    .first()
-                    .text()
-                    .trim() || null,
+                $('[class*="deadline"], [class*="closing"], [class*="submission"], [class*="due-date"], [class*="expiry"]')
+                    .first().text().trim() || null,
             requirements: $('ul li, ol li')
                 .map((_, el) => $(el).text().replace(/\s+/g, ' ').trim())
                 .get()
@@ -222,12 +189,7 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
         const rawText = (mainText.trim() || $('body').text()).replace(/\s+/g, ' ').trim().slice(0, 8000);
 
         // ── 1. Extract FIRST, before spending any money ──
-        const { opportunity, aiUsed } = await extractOpportunity(
-            rawText,
-            request.loadedUrl,
-            enableAiExtraction,
-            cheerioHints,
-        );
+        const { opportunity, aiUsed, aiProvider } = await extractOpportunity(rawText, request.loadedUrl, enableAiExtraction, cheerioHints);
 
         // ── 2. Reject junk pages before charging anything ──
         if (!isLikelyTender(rawText, opportunity.title)) {
@@ -242,8 +204,9 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
         slotUsed = true;
 
         // ── 4. Only charge for AI if it actually ran, and never when the user brought their own key ──
-        if (aiUsed && !userSuppliedKey) {
-            await Actor.charge({ eventName: 'ai-extraction' });
+        if (aiUsed) {
+            log.info(`[DETAIL] AI extraction via ${aiProvider}`);
+            if (!userSuppliedKey) await Actor.charge({ eventName: 'ai-extraction' });
         }
 
         // ── 5. Match against SME profile ──

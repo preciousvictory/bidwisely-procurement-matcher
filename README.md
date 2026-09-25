@@ -35,23 +35,25 @@ Procurement Portals
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `startUrls` | Array | ✅ | Procurement portal listing URLs to crawl |
-| `openAiApiKey` | String (secret) | ✅ | Your OpenAI API key for extraction + agent |
+| `aiProvider` | String | – | AI provider to use: `openai`, `gemini`, or `claude` (default: `openai`) |
+| `aiApiKey` | String (secret) | – | Your API key for the selected provider |
+| `aiModel` | String | – | (Optional) Override the default model (e.g. `gemini-1.5-flash-latest`) |
 | `smeProfile` | Object | ✅ | Your business profile (see shape below) |
 | `maxItems` | Integer | – | Max tender pages to process (default: 10) |
 | `maxRequestsPerCrawl` | Integer | – | Hard cap on total HTTP requests (default: 200) |
 | `keywords` | Array of strings | – | Only process pages containing these keywords |
-| `enableAiExtraction` | Boolean | – | Use GPT-4o-mini extraction (default: true) |
+| `enableAiExtraction` | Boolean | – | Use AI to extract structured fields. When disabled, totally ignores AI and falls back to a fast heuristic extractor (no API charges). (default: true) |
 
 ### SME Profile Shape
 
 ```json
 {
-  "industry": "Catering",
+  "industry": "Construction",
   "location": "Lagos",
   "capacity": 20000000,
   "certifications": ["CAC", "Tax Clearance"],
-  "services": ["Corporate Catering", "Events Management"],
-  "experience": ["Corporate Events", "Government Functions"]
+  "services": ["Building and Construction Services", "Renovation"],
+  "experience": ["Construction Projects", "Government Contracts"]
 }
 ```
 
@@ -70,11 +72,11 @@ Procurement Portals
   "contractValueMax": 18000000,
   "requirements": [
     "CAC registration",
-    "Tax clearance certificate",
-    "Minimum 3 years catering experience"
+    "Tax clearance certificate"
   ],
   "sourceUrl": "https://www.globaltenders.com/nigeria-tenders/12345",
   "publishedAt": "2026-09-24T19:30:00.000Z",
+  "extractionSource": "gemini",
   "matchScore": 90,
   "matchLabel": "Excellent Match 🟢",
   "matchBasis": "industry (35%), location (25%), capacity (20%), certifications (10%), keywords (10%)",
@@ -92,7 +94,11 @@ Procurement Portals
 
 ---
 
-## Sample AI Agent Briefing (Key-Value Store: `AGENT_SUMMARY`)
+## Sample AI Agent Briefing (Key-Value Store: `AGENT_SUMMARY` & `ALL_OPPORTUNITIES`)
+
+At the end of the run, the Actor writes two files to your Key-Value Store:
+1. `ALL_OPPORTUNITIES.json`: A full dump of every tender processed, separating the `opportunityDetails` from the `matchingConclusion`.
+2. `AGENT_SUMMARY.json`: An AI-generated executive briefing.
 
 ```json
 {
@@ -107,6 +113,8 @@ Procurement Portals
       "contractValue": "₦18,000,000"
     }
   ],
+  "aiGenerated": true,
+  "aiProvider": "gemini",
   "urgentDeadlines": [],
   "briefing": "Your top opportunity is the Federal Ministry of Finance catering tender at ₦18M — a near-perfect match. You hold all required certifications and your capacity comfortably covers the value. Recommended next steps: (1) Download the full RFP from the source URL, (2) Prepare your CAC and tax clearance certificates for submission, (3) Submit a competitive bid by 15 October. Two other partial matches in Abuja may require location flexibility..."
 }
@@ -116,20 +124,20 @@ Procurement Portals
 
 ## Pricing — Pay-Per-Event (PPE)
 
-BidWisely uses **Pay-Per-Event** monetisation. You only pay for the work actually done.
+BidWisely uses **Pay-Per-Event** monetisation on the Apify Store. You only pay for the work actually done.
 
 | Event | Price | Triggered When |
 |---|---|---|
 | `apify-actor-start` *(synthetic)* | \$0.01 | Actor run starts |
 | `opportunity-discovered` | \$0.02 | A tender page is successfully crawled and read |
-| `ai-extraction` | \$0.03 | GPT-4o-mini structures one opportunity |
+| `ai-extraction` | \$0.03 | AI structures one opportunity. **(Skipped if `enableAiExtraction` is false or you provide your own API key)** |
 | `agent-insight` | \$0.05 | The AI Agent generates the executive briefing |
 | `apify-default-dataset-item` *(synthetic)* | \$0.01 | Each matched record pushed to dataset |
 
 ### Example cost for a typical run
 
 - 25 opportunities discovered → \$0.50
-- 25 AI extractions → \$0.75
+- 25 AI extractions (without own key) → \$0.75
 - 1 agent briefing → \$0.05
 - 25 dataset items → \$0.25
 - **Total ≈ \$1.56** for 25 fully matched, AI-briefed procurement opportunities
@@ -211,37 +219,42 @@ Dockerfile              # Container image
 npm install
 ```
 
-### Step 2 — Add your OpenAI API key
+### Step 2 — Add your API key
 
 **Option A — `.env` file ✅ recommended for local development**
 
-Create a `.env` file in the project root (already in `.gitignore` — won't be committed):
+Create a `.env` file in the project root (already in `.gitignore` — won't be committed) and add the key for your preferred provider:
 
 ```
 OPENAI_API_KEY=sk-your-key-here
+# or
+GEMINI_API_KEY=AIzaSy...
+# or 
+CLAUDE_API_KEY=sk-ant-api03...
 ```
 
-The Apify SDK loads this automatically when you run `apify run`. You don't need to put the key anywhere else locally.
-
-> Get a key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). **Never commit your `.env` to Git.**
+The Apify SDK loads this automatically when you run `apify run`.
 
 **Option B — directly in `INPUT.json`**
 
-Add it to `storage/key_value_stores/default/INPUT.json`:
+Add it directly to your `storage/key_value_stores/default/INPUT.json` along with your provider selection:
 
 ```json
-{ "openAiApiKey": "sk-your-key-here" }
+{ 
+  "aiProvider": "gemini",
+  "aiApiKey": "AIzaSy..." 
+}
 ```
 
-**Option C — no API key (heuristic mode)**
+**Option C — No API key (Heuristic Mode)**
 
-Set `"enableAiExtraction": false` in your input. The Actor uses fast regex-based extraction — free, no key needed, less accurate. Good for testing the crawl.
+Set `"enableAiExtraction": false` in your input. The Actor will completely bypass all AI operations, avoiding API keys and charges altogether. It will use the fast regex-based heuristic extractor — highly scalable but less accurate.
 
 ---
 
 ### Step 3 — Set up your local input
 
-Create `storage/key_value_stores/default/INPUT.json` (omit `openAiApiKey` if you used Option A):
+Create `storage/key_value_stores/default/INPUT.json` (omit `aiApiKey` if you used Option A):
 
 ```json
 {
@@ -250,14 +263,15 @@ Create `storage/key_value_stores/default/INPUT.json` (omit `openAiApiKey` if you
     { "url": "https://etenders.com.ng/" }
   ],
   "smeProfile": {
-    "industry": "Catering",
+    "industry": "Construction",
     "location": "Lagos",
     "capacity": 20000000,
     "certifications": ["CAC", "Tax Clearance"],
-    "services": ["Corporate Catering", "Events Management"]
+    "services": ["Building and Construction Services", "Renovation"]
   },
   "maxItems": 5,
-  "enableAiExtraction": true
+  "enableAiExtraction": true,
+  "aiProvider": "gemini"
 }
 ```
 

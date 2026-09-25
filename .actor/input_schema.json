@@ -23,12 +23,28 @@
                 { "url": "https://ebid.com.ng/" }
             ]
         },
-        "openAiApiKey": {
-            "title": "OpenAI API Key",
+        "aiProvider": {
+            "title": "AI Provider",
             "type": "string",
-            "description": "Your OpenAI API key (starts with sk-). Required when 'Enable AI Extraction' is true. Leave blank and set enableAiExtraction to false to use the free heuristic extractor instead. Get a key at platform.openai.com/api-keys.",
+            "description": "Select the AI provider to use for extraction (OpenAI, Gemini, Claude).",
+            "editor": "select",
+            "default": "openai",
+            "enum": ["openai", "gemini", "claude"],
+            "enumTitles": ["OpenAI", "Google Gemini", "Anthropic Claude"]
+        },
+        "aiApiKey": {
+            "title": "API Key",
+            "type": "string",
+            "description": "Your API key for the selected AI provider. Required when 'Enable AI Extraction' is true.",
             "editor": "textfield",
             "isSecret": true
+        },
+        "aiModel": {
+            "title": "AI Model (Optional)",
+            "type": "string",
+            "description": "Override the default model (e.g., gpt-4o, gemini-1.5-pro, claude-3-5-sonnet). Leave blank for sensible defaults.",
+            "editor": "textfield",
+            "nullable": true
         },
         "smeProfile": {
             "title": "SME Profile",
