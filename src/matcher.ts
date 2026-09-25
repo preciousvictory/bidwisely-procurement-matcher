@@ -58,7 +58,7 @@ export function matchOpportunity(opportunity: Opportunity, profile: SmeProfile, 
 
     const passed = Object.values(checks).filter(Boolean).length;
     const explanation = [
-        `Match score: ${score}% based on relevance, not chance of winning.`,
+        `Match score: ${score}%.`,
         `Passed ${passed}/${Object.keys(checks).length} criteria.`,
         missingRequirements.length ? `Action required: ${missingRequirements.join('; ')}.` : 'No immediate gaps detected.',
     ].join(' ');

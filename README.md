@@ -124,25 +124,24 @@ At the end of the run, the Actor writes two files to your Key-Value Store:
 
 ## Pricing — Pay-Per-Event (PPE)
 
-BidWisely uses **Pay-Per-Event** monetisation on the Apify Store. You only pay for the work actually done.
+BidWisely uses **Pay-Per-Event** monetisation on the Apify Store. You only pay for the work actually done, making it incredibly cost-effective.
 
-| Event | Price | Triggered When |
+| Event | Price per 1,000 | Triggered When |
 |---|---|---|
 | `apify-actor-start` *(synthetic)* | \$0.01 | Actor run starts |
-| `opportunity-discovered` | \$0.02 | A tender page is successfully crawled and read |
-| `ai-extraction` | \$0.03 | AI structures one opportunity. **(Skipped if `enableAiExtraction` is false or you provide your own API key)** |
-| `agent-insight` | \$0.05 | The AI Agent generates the executive briefing |
-| `apify-default-dataset-item` *(synthetic)* | \$0.01 | Each matched record pushed to dataset |
+| `ai-extraction` | \$0.50 | AI structures one opportunity. **(Skipped if `enableAiExtraction` is false or you provide your own API key)** |
+| `agent-insight` | \$1.00 | The AI Agent generates the actionable executive briefing |
+| `apify-default-dataset-item` *(synthetic)* | \$0.01 | Each matched record pushed to the dataset |
 
-### Example cost for a typical run
+### Example cost for a typical run (1,000 opportunities)
 
-- 25 opportunities discovered → \$0.50
-- 25 AI extractions (without own key) → \$0.75
-- 1 agent briefing → \$0.05
-- 25 dataset items → \$0.25
-- **Total ≈ \$1.56** for 25 fully matched, AI-briefed procurement opportunities
+- Actor Start → \$0.00001
+- 1,000 AI extractions (without own key) → \$0.50
+- 1 actionable insight briefing → \$0.001
+- 1,000 dataset item results → \$0.01
+- **Total ≈ \$0.51** for 1,000 fully matched, AI-briefed procurement opportunities!
 
-> Set `ACTOR_MAX_TOTAL_CHARGE_USD` in your run configuration to cap spend.
+> Set `ACTOR_MAX_TOTAL_CHARGE_USD` in your run configuration to cap your total spend.
 
 ---
 

@@ -25,7 +25,11 @@ let processedCount = 0;
 const domainCounts = new Map<string, number>();
 
 function hostnameOf(url: string): string {
-    try { return new URL(url).hostname; } catch { return 'unknown'; }
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return 'unknown';
+    }
 }
 
 function parseUrlSlug(url: string): CheerioHints {
@@ -37,9 +41,14 @@ function parseUrlSlug(url: string): CheerioHints {
 
         const withoutId = slug.replace(/_\d+$/, '');
         const pipeIdx = withoutId.indexOf('|');
-        const buyer = pipeIdx >= 0
-            ? withoutId.slice(pipeIdx + 1).replace(/-+/g, ' ').replace(/\s+/g, ' ').trim()
-            : null;
+        const buyer =
+            pipeIdx >= 0
+                ? withoutId
+                      .slice(pipeIdx + 1)
+                      .replace(/-+/g, ' ')
+                      .replace(/\s+/g, ' ')
+                      .trim()
+                : null;
         const beforePipe = pipeIdx >= 0 ? withoutId.slice(0, pipeIdx).replace(/-$/, '') : withoutId;
 
         const tripleMatch = beforePipe.match(/^(.+?)---(.+)$/);
@@ -76,13 +85,56 @@ function parseUrlSlug(url: string): CheerioHints {
 }
 
 function isDetailUrl(url: string): boolean {
-    return (
-        /\/view\//i.test(url) ||
-        /\/tender-detail/i.test(url) ||
-        /\/notice\//i.test(url) ||
-        /[?&]tender[-_]?id=/i.test(url) ||
-        /\/tenders\/\d+/i.test(url)
-    );
+    const p = url.toLowerCase();
+
+    // 1. Explicit detail page indicators
+    if (
+        p.includes('/view/') ||
+        p.includes('detail') ||
+        p.includes('/notice/') ||
+        p.includes('tender') ||
+        p.includes('procure') ||
+        p.includes('contract') ||
+        p.includes('project') ||
+        p.includes('bid') ||
+        p.includes('id=') || // catches ?tender_id=123 or &tndrId=xyz
+        /\/\d+$/.test(p) // catches /tenders/12345
+    ) {
+        return true;
+    }
+
+    // 2. Common start phrases for long WordPress-style procurement slugs
+    if (
+        p.includes('invitation-to') ||
+        p.includes('request-for') ||
+        p.includes('expression-of') ||
+        p.includes('pre-qualification') ||
+        p.includes('technical-bidding') ||
+        p.includes('supply-of')
+    ) {
+        return true;
+    }
+
+    // 3. Catch-all for "just / and long text"
+    // If the URL has a lot of hyphens, it's almost certainly a blog post/detail page
+    // and not a generic listing page like /tenders.
+    try {
+        const urlObj = new URL(url);
+        // Get the last meaningful part of the URL path
+        const pathParts = urlObj.pathname.split('/').filter(Boolean);
+        const slug = pathParts[pathParts.length - 1] || '';
+
+        // If the slug contains 3 or more hyphens, treat it as a detail page
+        // e.g., /kebbi-state-ministry-of-works-invitation-to-tender
+        if ((slug.match(/-/g) || []).length >= 3) {
+            return true;
+        }
+    } catch (e) {
+        // Fallback if URL parsing fails
+        log.warning(`Failed to parse URL for detail check: ${url}. Error: ${(e as Error).message}`);
+    }
+
+    return false;
 }
 
 router.addHandler('LISTING', async ({ $, request, enqueueLinks }) => {
@@ -113,18 +165,20 @@ router.addHandler('LISTING', async ({ $, request, enqueueLinks }) => {
         }
     }
 
-    const broadCount = $('a[href*="tender"]').length;
+    const broadCount = $(
+        'a[href*="tender"], a[href*="bid"], a[href*="procure"], a[href*="contract"], a[href*="project"]',
+    ).length;
     if (broadCount > 0) {
-        log.info(`[LISTING] Broad fallback: enqueuing filtered set from ${broadCount} tender links`);
+        log.info(`[LISTING] Broad fallback: enqueuing filtered set from ${broadCount} tender-related links`);
         await enqueueLinks({
-            selector: 'a[href*="tender"]',
+            selector: 'a[href*="tender"], a[href*="bid"], a[href*="procure"], a[href*="contract"], a[href*="project"]',
             label: 'DETAIL',
             transformRequestFunction: (req) => (isDetailUrl(req.url) ? req : false),
         });
         return;
     }
 
-    log.info('[LISTING] No tender links found, enqueuing all links for deeper discovery');
+    log.info('[LISTING] No explicit tender links found, enqueuing all links for deeper discovery');
     await enqueueLinks({ label: 'LISTING' });
 });
 
@@ -170,14 +224,24 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
                 (h2Text && h2Text.length < 200 ? h2Text : null) ||
                 urlHints.title,
             buyer:
-                $('.buyer, .entity, .organization, [class*="buyer"], [class*="org"], [class*="ministry"], [class*="agency"], .client-name')
-                    .first().text().trim() || urlHints.buyer,
+                $(
+                    '.buyer, .entity, .organization, [class*="buyer"], [class*="org"], [class*="ministry"], [class*="agency"], .client-name',
+                )
+                    .first()
+                    .text()
+                    .trim() || urlHints.buyer,
             location:
                 $('[class*="location"], [class*="state"], [class*="region"], [class*="address"], [class*="venue"]')
-                    .first().text().trim() || urlHints.location,
+                    .first()
+                    .text()
+                    .trim() || urlHints.location,
             deadline:
-                $('[class*="deadline"], [class*="closing"], [class*="submission"], [class*="due-date"], [class*="expiry"]')
-                    .first().text().trim() || null,
+                $(
+                    '[class*="deadline"], [class*="closing"], [class*="submission"], [class*="due-date"], [class*="expiry"]',
+                )
+                    .first()
+                    .text()
+                    .trim() || null,
             requirements: $('ul li, ol li')
                 .map((_, el) => $(el).text().replace(/\s+/g, ' ').trim())
                 .get()
@@ -185,11 +249,25 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
                 .slice(0, 20),
         };
 
+        // ── Clean up DOM before extracting text so words aren't squished and boilerplate is removed ──
+        $('script, style, noscript, nav, header, footer, iframe, svg, img, aside').remove();
+        // Be careful not to remove <form> entirely, as some ASP.NET sites wrap the whole page in a form.
+        $(
+            '[class*="header"], [id*="header"], [class*="footer"], [id*="footer"], [class*="sidebar"], [id*="sidebar"], [class*="menu"], [id*="menu"], [class*="modal"], [id*="modal"], [class*="popup"], [style*="display: none"], [style*="display:none"]',
+        ).remove();
+
+        $('p, div, br, li, td, th, h1, h2, h3, h4, h5, h6').append(' ');
+
         const mainText = $('main, article, .content, #content, .tender-detail, .opportunity-detail').first().text();
-        const rawText = (mainText.trim() || $('body').text()).replace(/\s+/g, ' ').trim().slice(0, 8000);
+        const rawText = (mainText.trim() || $('body').text()).replace(/\s+/g, ' ').trim().slice(0, 15000);
 
         // ── 1. Extract FIRST, before spending any money ──
-        const { opportunity, aiUsed, aiProvider } = await extractOpportunity(rawText, request.loadedUrl, enableAiExtraction, cheerioHints);
+        const { opportunity, aiUsed, aiProvider } = await extractOpportunity(
+            rawText,
+            request.loadedUrl,
+            enableAiExtraction,
+            cheerioHints,
+        );
 
         // ── 2. Reject junk pages before charging anything ──
         if (!isLikelyTender(rawText, opportunity.title)) {
@@ -199,14 +277,17 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
             return;
         }
 
-        // ── 3. Charge for the opportunity that was actually found ──
-        const discoveryCharge = await Actor.charge({ eventName: 'opportunity-discovered' });
+        // ── 3. Mark slot as used since it's a valid tender ──
         slotUsed = true;
 
         // ── 4. Only charge for AI if it actually ran, and never when the user brought their own key ──
+        let limitReached = false;
         if (aiUsed) {
             log.info(`[DETAIL] AI extraction via ${aiProvider}`);
-            if (!userSuppliedKey) await Actor.charge({ eventName: 'ai-extraction' });
+            if (!userSuppliedKey) {
+                const aiCharge = await Actor.charge({ eventName: 'ai-extraction' });
+                limitReached = aiCharge.eventChargeLimitReached;
+            }
         }
 
         // ── 5. Match against SME profile ──
@@ -228,10 +309,10 @@ router.addHandler('DETAIL', async ({ $, request, crawler }) => {
         };
 
         log.info(`[DETAIL] ${match.score}% (${match.label}) [${matchStatus}] - "${opportunity.title ?? 'Untitled'}"`);
-        await Actor.pushData(record);
+        await Actor.pushData(record); // This inherently triggers 'apify-default-dataset-item' charge
 
-        if (discoveryCharge.eventChargeLimitReached) {
-            log.warning('[DETAIL] Spending limit reached, stopping crawl.');
+        if (limitReached) {
+            log.warning('[DETAIL] Spending limit reached after AI extraction, stopping crawl.');
             await crawler.autoscaledPool?.abort();
             return;
         }

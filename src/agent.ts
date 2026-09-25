@@ -47,6 +47,7 @@ const brief = (o: MatchedOpportunity) => ({
     matchScore: o.matchScore,
     matchLabel: o.matchLabel,
     missingRequirements: o.missingRequirements,
+    matchExplanation: o.matchExplanation,
     sourceUrl: o.sourceUrl,
 });
 
@@ -57,7 +58,7 @@ function fallbackBriefing(top: MatchedOpportunity[], urgent: number, total: numb
         `Best fit: "${best.title ?? 'Untitled'}" at ${best.matchScore}% relevance` +
         `${best.deadline ? `, closing ${best.deadline}` : ''}. ` +
         `${urgent > 0 ? `${urgent} tender(s) close within 7 days. ` : ''}` +
-        'Open each original notice and confirm the requirements before bidding. Scores show relevance, not the chance of winning.'
+        'Open each original notice and confirm the requirements before bidding.'
     );
 }
 
@@ -112,30 +113,45 @@ export async function runAiAgentSummary({ smeProfile, chargeForInsight = true }:
                 certifications: smeProfile.certifications ?? [],
                 services: smeProfile.services ?? [],
             })}\n\n` +
-            `Candidate tenders (already ranked by a rule-based relevance score; the score is NOT a chance of winning):\n${JSON.stringify(top5.map(brief), null, 1)}\n\n` +
+            `Candidate tenders (already ranked by a rule-based relevance score):\n${JSON.stringify(top5.map(brief), null, 1)}\n\n` +
             'Use ONLY the data above. Do not invent tenders, values, dates or requirements.\n' +
-            'Return ONLY JSON: {"briefing": string (max 200 words, professional and encouraging), ' +
-            '"priorities": [{"sourceUrl": string (copied exactly from the data), "why": string (max 25 words), "nextStep": string (max 20 words)}]}';
+            'You MUST reply with a raw JSON object and absolutely nothing else. Do not use markdown formatting. Structure:\n' +
+            '{\n' +
+            '  "briefing": "A highly detailed, 300-word executive summary. Explicitly detail WHY the top matches fit the SME profile (e.g., matching capacity, location, certifications) and note any missing requirements.",\n' +
+            '  "priorities": [\n' +
+            '    {\n' +
+            '      "sourceUrl": "EXACT url from the data",\n' +
+            '      "why": "Brief 40-word explanation of why this matches the profile",\n' +
+            '      "nextStep": "Actionable next step to secure the bid"\n' +
+            '    }\n' +
+            '  ]\n' +
+            '}';
 
         try {
             const preferred = (process.env.AI_PROVIDER as AiProvider | 'auto' | undefined) ?? 'auto';
-            const { text, provider } = await callJsonWithFallback(keys, preferred, system, user, 900);
+            const { text, provider } = await callJsonWithFallback(keys, preferred, system, user, 1500);
             const parsed = extractJsonObject<{
                 briefing?: unknown;
                 priorities?: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }[];
-            }>(text) ?? {};
+            }>(text);
 
-            if (typeof parsed.briefing === 'string' && parsed.briefing.trim()) briefing = parsed.briefing.trim();
+            if (!parsed || typeof parsed.briefing !== 'string') {
+                log.warning('[agent] AI returned invalid JSON or missing briefing string. Raw output:', { text: text.slice(0, 500) });
+            }
+
+            const p = parsed ?? {};
+
+            if (typeof p.briefing === 'string' && p.briefing.trim()) briefing = p.briefing.trim();
 
             // Keep only priorities that point at a real top5 record (guards against hallucinated URLs)
             const valid = new Map(top5.map((o) => [o.sourceUrl, o]));
-            const cleaned: Priority[] = (parsed.priorities ?? [])
-                .filter((p: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }) => typeof p.sourceUrl === 'string' && valid.has(p.sourceUrl) && typeof p.why === 'string' && typeof p.nextStep === 'string')
-                .map((p: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }) => ({
-                    sourceUrl: p.sourceUrl as string,
-                    title: valid.get(p.sourceUrl as string)?.title ?? null,
-                    why: p.why as string,
-                    nextStep: p.nextStep as string,
+            const cleaned: Priority[] = (p.priorities ?? [])
+                .filter((priorityItem: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }) => typeof priorityItem.sourceUrl === 'string' && valid.has(priorityItem.sourceUrl) && typeof priorityItem.why === 'string' && typeof priorityItem.nextStep === 'string')
+                .map((priorityItem: { sourceUrl?: unknown; why?: unknown; nextStep?: unknown }) => ({
+                    sourceUrl: priorityItem.sourceUrl as string,
+                    title: valid.get(priorityItem.sourceUrl as string)?.title ?? null,
+                    why: priorityItem.why as string,
+                    nextStep: priorityItem.nextStep as string,
                 }));
             if (cleaned.length > 0) priorities = cleaned;
             agentUsedAi = true;
