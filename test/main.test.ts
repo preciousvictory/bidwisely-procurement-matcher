@@ -1,26 +1,73 @@
-import { CheerioCrawler, purgeDefaultStorages } from '@crawlee/cheerio';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { matchOpportunity } from '../src/matcher.js';
+import type { Opportunity, SmeProfile } from '../src/types.js';
 
-import { router } from '../src/routes.js';
+describe('BidWisely Matcher', () => {
+    it('should calculate match score correctly', () => {
+        const opportunity: Opportunity = {
+            title: 'Construction of Solar Powered Borehole',
+            buyer: 'Ministry of Water Resources',
+            category: 'Construction',
+            location: 'Lagos',
+            deadline: '2024-12-31',
+            contractValue: null,
+            contractValueMax: null,
+            currency: null,
+            requirements: ['Must have CAC', 'Must have Tax Clearance'],
+            certifications: ['CAC registration', 'Tax clearance'],
+            minExperienceYears: null,
+            sourceUrl: 'https://example.com/tender',
+            scrapedAt: new Date().toISOString()
+        };
 
-describe('CheerioCrawler', () => {
-    beforeAll(async () => {
-        await purgeDefaultStorages();
+        const profile: SmeProfile = {
+            industry: 'Construction',
+            location: 'Lagos',
+            capacity: 50000000,
+            certifications: ['CAC', 'Tax Clearance'],
+            services: ['Borehole Drilling', 'Construction'],
+            experience: []
+        };
+
+        const result = matchOpportunity(opportunity, profile, ['solar', 'borehole']);
+
+        // Industry match (35%) + Location match (25%) + Certs (10%) + Keywords (10%) = 80%
+        // Since we have all certs, and capacity is fine.
+        expect(result.score).toBeGreaterThan(60);
+        expect(result.label).toBeDefined();
+        expect(result.missingRequirements).toHaveLength(0);
     });
 
-    it('should crawl a page and extract data to dataset', async () => {
-        const crawler = new CheerioCrawler({
-            maxRequestsPerCrawl: 10,
-            requestHandler: router,
-        });
+    it('should detect missing requirements', () => {
+        const opportunity: Opportunity = {
+            title: 'Supply of Medical Equipment',
+            buyer: 'Ministry of Health',
+            category: 'Medical',
+            location: 'Abuja',
+            deadline: null,
+            contractValue: null,
+            contractValueMax: null,
+            currency: null,
+            requirements: ['ISO 9001 Certification', 'PENCOM Certificate'],
+            certifications: ['ISO 9001', 'PenCom compliance'],
+            minExperienceYears: null,
+            sourceUrl: 'https://example.com',
+            scrapedAt: new Date().toISOString()
+        };
 
-        await crawler.run(['https://www.example.com']);
+        const profile: SmeProfile = {
+            industry: 'Construction',
+            location: 'Lagos',
+            capacity: 5000000,
+            certifications: ['CAC'],
+            services: ['Building'],
+            experience: []
+        };
 
-        expect(crawler.stats.state.requestsFinished).toBeGreaterThanOrEqual(1);
+        const result = matchOpportunity(opportunity, profile, []);
 
-        const { items } = await crawler.getData();
-        expect(items.length).toBeGreaterThan(0);
-        expect(items[0].url).toContain('example.com');
-        expect(items[0].title).toContain('Example Domain');
-    }, 30_000);
+        // Poor match, missing certs
+        expect(result.score).toBeLessThan(40);
+        expect(result.missingRequirements.length).toBeGreaterThan(0);
+    });
 });
