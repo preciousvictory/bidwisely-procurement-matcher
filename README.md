@@ -7,26 +7,41 @@
 
 ## What It Does
 
-African SMEs lose billions in potential contracts every year because procurement information is **scattered across hundreds of portals, PDFs, and government websites**. BidWisely solves this with a single, end-to-end Actor that:
+African SMEs lose billions in potential government and private contracts every year. Procurement information is **scattered across hundreds of poorly formatted portals, inaccessible PDFs, and fragmented government websites**. Identifying a relevant tender and determining if a business meets the eligibility criteria usually takes days of manual effort. 
 
-1. **Crawls** Nigerian public procurement portals (BPP, NoCoPo, Lagos PPA, GlobalTenders, eTenders, and more)
-2. **Extracts** structured tender fields (title, buyer, category, location, deadline, contract value, requirements) using **GPT-4o-mini**
-3. **Matches** each opportunity against your SME profile with a **transparent, weighted scoring engine**
-4. **Acts** as an AI Agent — ranking opportunities, flagging urgent deadlines, and generating an **actionable executive briefing** saved to the Key-Value Store
+**BidWisely** is an autonomous, end-to-end procurement intelligence engine that automates this entire pipeline. It acts as an elite, AI-driven procurement analyst for your business:
 
-```
+1. **Aggressive Web Crawling:** Deep-crawls popular Nigerian and pan-African procurement portals (e.g., BPP, NoCoPo, Lagos PPA, eTenders), traversing nested lists and complex pagination.
+2. **Boilerplate Destruction:** Intelligently cleans raw, squished HTML DOMs, stripping away headers, footers, and modal pop-ups to isolate the pure procurement text.
+3. **Multi-Model AI Extraction:** Uses advanced LLMs (OpenAI, Gemini, or Claude) to structure messy, unstructured tender articles into clean JSON (extracting title, buyer, category, location, deadline, exact contract values, and strict eligibility requirements).
+4. **Algorithmic Profiling:** Runs a transparent, weighted scoring engine against your exact SME Profile (evaluating financial capacity, location, industry, and certifications) to calculate a definitive `matchScore` and flag missing requirements.
+5. **Executive AI Briefing:** Instead of just giving you a spreadsheet, an AI Agent generates a highly detailed, personalized executive summary—explaining *exactly why* top tenders fit your business, detailing the missing requirements, and providing actionable next steps.
+
+```text
 Procurement Portals
       ↓
   CheerioCrawler
       ↓
-  GPT-4o-mini Extraction
+  DOM Cleansing & Multi-LLM Extraction (OpenAI/Gemini/Claude)
       ↓
-  Weighted Matching Engine
+  Weighted SME Matching Engine
       ↓
-  Dataset (Matched Tenders)
+  Dataset (Ranked Tenders)
       ↓
-  AI Agent Briefing (KV Store)
+  AI Agent Executive Briefing (KV Store)
 ```
+
+---
+
+## Technologies & Stack
+
+BidWisely is built for scale, speed, and multi-model intelligence:
+
+- **[Apify SDK](https://sdk.apify.com/) & [Crawlee](https://crawlee.dev/):** Utilizes `CheerioCrawler` for blazing-fast, concurrent, HTML-only scraping, circumventing the massive performance overhead of headless browsers.
+- **TypeScript:** Fully typed architecture ensuring robust data contracts from the scraper to the AI Agent.
+- **Zod:** Strict runtime schema validation for LLM outputs, ensuring the AI never hallucinates invalid fields or corrupted datasets.
+- **Multi-LLM Fallback Engine:** Natively integrates the official SDKs for **OpenAI** (GPT-4o-mini), **Google Gemini** (1.5 Flash), and **Anthropic** (Claude 3.5 Haiku). It seamlessly falls back across providers if one rate-limits, and gracefully degrades to a fast, regex-based heuristic extractor if AI is disabled.
+- **Pay-Per-Event (PPE) Monetization:** Native integration with Apify's PPE billing framework, tracking precise, transparent micro-charges for AI extractions and agent briefings.
 
 ---
 
