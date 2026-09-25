@@ -1,0 +1,22 @@
+{
+    "$schema": "https://apify.com/schemas/v1/actor.ide.json",
+    "actorSpecification": 1,
+    "name": "bidwisely-procurement-matcher",
+    "title": "BidWisely - African Procurement Matcher & AI Agent",
+    "description": "AI-powered procurement intelligence for African SMEs. Crawls Nigerian public tender portals, extracts opportunity data via GPT-4o-mini, matches to your SME profile, and delivers an executive briefing. Pay-per-event monetisation.",
+    "version": "1.0",
+    "buildTag": "latest",
+    "categories": ["LEAD_GENERATION", "AI", "BUSINESS"],
+    "minMemoryMbytes": 256,
+    "maxMemoryMbytes": 1024,
+    "meta": {
+        "templateId": "ts-crawlee-cheerio",
+        "generatedBy": "Antigravity with Claude Sonnet 4.6 (Thinking)"
+    },
+    "inputSchema": "./input_schema.json",
+    "outputSchema": "./output_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json"
+    },
+    "dockerfile": "../Dockerfile"
+}

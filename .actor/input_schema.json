@@ -1,0 +1,87 @@
+{
+    "$schema": "https://apify.com/schemas/v1/input.ide.json",
+    "title": "BidWisely Procurement Matcher",
+    "description": "Scrapes Nigerian/African procurement portals, uses GPT-4o-mini to extract structured tender data, matches opportunities to your SME profile, and generates an AI executive briefing.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "startUrls": {
+            "title": "Start URLs",
+            "type": "array",
+            "description": "Procurement listing URLs to crawl. Add as many portals as needed.",
+            "editor": "requestListSources",
+            "prefill": [
+                { "url": "https://www.tender.ng/" },
+                { "url": "https://etenders.com.ng/" },
+                { "url": "https://www.globaltenders.com/nigeria-tenders" },
+                { "url": "https://bpp.gov.ng" },
+                { "url": "https://nocopo.bpp.gov.ng/" },
+                { "url": "https://lagosppa.gov.ng/" },
+                { "url": "https://www.nigeriatenders.com/" },
+                { "url": "https://procurement.ngojobsite.com/" },
+                { "url": "https://publicprocurement.org/" },
+                { "url": "https://ebid.com.ng/" }
+            ]
+        },
+        "openAiApiKey": {
+            "title": "OpenAI API Key",
+            "type": "string",
+            "description": "Your OpenAI API key (starts with sk-). Required when 'Enable AI Extraction' is true. Leave blank and set enableAiExtraction to false to use the free heuristic extractor instead. Get a key at platform.openai.com/api-keys.",
+            "editor": "textfield",
+            "isSecret": true
+        },
+        "smeProfile": {
+            "title": "SME Profile",
+            "type": "object",
+            "description": "Your business profile. The matching engine uses this to score every opportunity.",
+            "editor": "json",
+            "prefill": {
+                "industry": "Construction",
+                "location": "Lagos",
+                "capacity": 20000000,
+                "certifications": ["CAC", "Tax Clearance"],
+                "services": ["Building and Construction Services", "Renovation and Maintenance", "Sale and Installation of Construction Aluminum roofing and ceiling materials"],
+                "experience": ["Construction Projects", "Government Contracts"]
+            }
+        },
+        "maxItems": {
+            "title": "Max Tenders to Process",
+            "type": "integer",
+            "description": "Maximum number of individual tender pages to extract and match. Keep low for demos.",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 200
+        },
+        "maxRequestsPerCrawl": {
+            "title": "Max HTTP Requests",
+            "type": "integer",
+            "description": "Hard cap on total HTTP requests. Prevents runaway crawls.",
+            "default": 200,
+            "minimum": 10,
+            "maximum": 2000
+        },
+        "keywords": {
+            "title": "Filter Keywords",
+            "type": "array",
+            "description": "If set, only process tender pages containing at least one of these keywords (case-insensitive).",
+            "editor": "stringList",
+            "default": []
+        },
+        "enableAiExtraction": {
+            "title": "Enable AI Extraction",
+            "type": "boolean",
+            "description": "Use GPT-4o-mini to extract structured fields. When disabled, falls back to a fast heuristic extractor (no API charges).",
+            "default": true
+        },
+        "proxyConfiguration": {
+            "title": "Proxy Configuration",
+            "type": "object",
+            "description": "Select proxies to be used. Apify Proxy is recommended to bypass blocks on sites like globaltenders.com.",
+            "editor": "proxy",
+            "default": {
+                "useApifyProxy": true
+            }
+        }
+    },
+    "required": ["startUrls", "smeProfile"]
+}

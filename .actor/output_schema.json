@@ -1,0 +1,17 @@
+{
+    "$schema": "https://apify.com/schemas/v1/output.ide.json",
+    "actorOutputSchemaVersion": 1,
+    "title": "BidWisely Output",
+    "properties": {
+        "matchedOpportunities": {
+            "type": "string",
+            "title": "Matched Opportunities (Dataset)",
+            "template": "{{links.apiDefaultDatasetUrl}}/items"
+        },
+        "agentSummary": {
+            "type": "string",
+            "title": "AI Agent Briefing (Key-Value Store)",
+            "template": "{{links.apiDefaultKeyValueStoreUrl}}/keys/AGENT_SUMMARY"
+        }
+    }
+}

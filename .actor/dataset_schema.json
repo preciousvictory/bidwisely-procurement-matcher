@@ -1,0 +1,89 @@
+{
+    "$schema": "https://apify.com/schemas/v1/dataset.ide.json",
+    "actorSpecification": 1,
+    "fields": {},
+    "views": {
+        "overview": {
+            "title": "All Opportunities",
+            "transformation": {
+                "fields": [
+                    "matchScore",
+                    "matchLabel",
+                    "matchStatus",
+                    "title",
+                    "buyer",
+                    "category",
+                    "location",
+                    "deadline",
+                    "contractValue",
+                    "requirements",
+                    "matchExplanation",
+                    "missingRequirements",
+                    "sourceUrl",
+                    "publishedAt"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "matchScore": {
+                        "label": "Match %",
+                        "format": "number"
+                    },
+                    "matchLabel": {
+                        "label": "Rating",
+                        "format": "text"
+                    },
+                    "matchStatus": {
+                        "label": "Status",
+                        "format": "text"
+                    },
+                    "title": {
+                        "label": "Tender Title",
+                        "format": "text"
+                    },
+                    "buyer": {
+                        "label": "Buyer / Organisation",
+                        "format": "text"
+                    },
+                    "category": {
+                        "label": "Category",
+                        "format": "text"
+                    },
+                    "location": {
+                        "label": "Location",
+                        "format": "text"
+                    },
+                    "deadline": {
+                        "label": "Deadline",
+                        "format": "text"
+                    },
+                    "contractValue": {
+                        "label": "Contract Value",
+                        "format": "text"
+                    },
+                    "requirements": {
+                        "label": "Eligibility Criteria",
+                        "format": "array"
+                    },
+                    "matchExplanation": {
+                        "label": "Match Explanation",
+                        "format": "text"
+                    },
+                    "missingRequirements": {
+                        "label": "Gaps",
+                        "format": "array"
+                    },
+                    "sourceUrl": {
+                        "label": "Tender Link",
+                        "format": "link"
+                    },
+                    "publishedAt": {
+                        "label": "Extracted At",
+                        "format": "date"
+                    }
+                }
+            }
+        }
+    }
+}
